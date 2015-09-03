@@ -81,14 +81,11 @@ module.exports.http = {
     graphql: function(req, res, next) {
       console.log('executing graphql query');
       if (req.url === '/graphql') {
-        WaterlineToGraphQL.getGraphQLSchemaFromSailsModels(sails.models).then(function(schema) {
-          require('express-graphql')({
+        var schema = WaterlineToGraphQL.getGraphQLSchemaFromSailsModels(sails.models);
+        require('express-graphql')({
             schema: schema,
             pretty: true
           })(req, res);
-        }).catch(function(err) {
-          console.error('conversion failed', err);
-        });
       } else {
         return next();
       }

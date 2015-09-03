@@ -8,7 +8,10 @@
 module.exports = {
   identity: 'post',
   attributes: {
-
+    text:'string',
+    from: {
+      model: 'user'
+    }
   }
 };
 

@@ -13,6 +13,7 @@ import {
   GraphQLObjectType,
   GraphQLSchema,
   GraphQLString,
+  GraphQLInterfaceType
 }
 from 'graphql';
 
@@ -27,206 +28,170 @@ import {
 }
 from 'graphql-relay';
 
-var {
-  nodeInterface, nodeField
-} = nodeDefinitions(
-  (globalId) => {
-    var {
-      type, id
-    } = fromGlobalId(globalId);
-    if(type === 'User') {
-      return getUser(id);
-    } else if(type === 'Widget') {
-      return getWidget(id);
-    } else {
-      return null;
-    }
-  }, (obj) => {
-    if(obj instanceof User) {
-      return userType;
-    } else if(obj instanceof Widget) {
-      return widgetType;
-    } else {
-      return null;
-    }
-  }
-);
 var Schema = undefined;
 
-export function getGraphQLSchemaFromSailsModels(models, cb) {
-  var promise = new Promise(function(resolve, reject) {
-    if(Schema) {
-      return resolve(Schema);
-    }
-    var GraphQLSchemaManager = {};
-    _.each(models, function eachInstantiatedModel(thisModel, modelID) {
-      _.bindAll(thisModel);
-      var obj = {
-        type: createGraphQLTypeForWaterlineModel(thisModel, modelID),
-        model: thisModel,
-        modelID: modelID
-      };
-      obj.queries = createGraphQLQueries(obj);
-      GraphQLSchemaManager[modelID] = obj;
-    });
+export function getGraphQLSchemaFromSailsModels(models) {
+  if(Schema) {
+    return Schema;
+  }
 
+  var GraphQLSchemaManager = {
+    types:{},
+    queries:{},
+    connectionTypes:{},
+    mutations:{},
+    waterlineModels: models
+  };
 
-    var queryType = new GraphQLObjectType({
-      name: 'Query',
-      fields: () => {
-        return _.reduce(GraphQLSchemaManager, function(total, obj, key) {
-          return _.merge(total, obj.queries);
-        }, {});
-      }
-    });
-
-
-    var mutationType = new GraphQLObjectType({
-      name: 'Mutation',
-      fields: () => ({
-        // Add your own mutations here
-      })
-    });
-
-    Schema = new GraphQLSchema({
-      query: queryType
-    });
-
-    return resolve && resolve(Schema);
-  });
-  return promise;
-}
-
-export function getGraphQLSchema(ModelDefinitions, cb) {
-
-  var promise = new Promise(function(resolve, reject) {
-    if(Schema) {
-      return resolve(Schema);
-    }
-    let waterLineInstance = new Waterline();
-    //load waterline collections
-    ModelDefinitions.forEach(function(model) {
-      model.connection = 'myLocalDisk';
-      waterLineInstance.loadCollection(Waterline.Collection.extend(model));
-    });
-
-    // Build A Config Object
-    var config = {
-
-      // Setup Adapters
-      // Creates named adapters that have have been required
-      adapters: {
-        'default': diskAdapter,
-        disk: diskAdapter
+  let Node = new GraphQLInterfaceType({
+    name: 'Node',
+    description: 'An object with an ID',
+    fields: () => ({
+      id: {
+        type: new GraphQLNonNull(GraphQLString),
+        description: 'The global unique ID of an object'
       },
-
-      // Build Connections Config
-      // Setup connections using the named adapter configs
-      connections: {
-        myLocalDisk: {
-          adapter: 'disk'
-        }
-      },
-
-      defaults: {
-        migrate: 'drop'
+      type: {
+        type: new GraphQLNonNull(GraphQLString),
+        description: 'The type of the object'
       }
-
-    };
-
-    var GraphQLSchemaManager = {};
-    //initialize waterline collections
-    waterLineInstance.initialize(config, function(err, initializedWaterlineInstance) {
-      if(err) {
-        cb && cb(err);
-        reject && reject(err);
-      } else {
-        var models = initializedWaterlineInstance.collections || [];
-        _.each(models, function eachInstantiatedModel(thisModel, modelID) {
-          _.bindAll(thisModel);
-          var obj = {
-            type: createGraphQLTypeForWaterlineModel(thisModel, modelID),
-            model: thisModel,
-            modelID: modelID
-          };
-          obj.queries = createGraphQLQueries(obj);
-          GraphQLSchemaManager[modelID] = obj;
-        });
-
-
-        var queryType = new GraphQLObjectType({
-          name: 'Query',
-          fields: () => ({
-            user: {
-              type: GraphQLSchemaManager.user.type,
-              args: {
-                id: {
-                  name: 'id',
-                  type: new GraphQLNonNull(GraphQLString)
-                }
-              },
-              resolve: (obj, {
-                id
-              }) => {
-                return GraphQLSchemaManager.user.model.find({
-                  id: id
-                }).then(function(result) {
-                  return result[0];
-                });
-              }
-            },
-          })
-        });
-
-
-        var mutationType = new GraphQLObjectType({
-          name: 'Mutation',
-          fields: () => ({
-            // Add your own mutations here
-          })
-        });
-
-        Schema = new GraphQLSchema({
-          query: queryType
-        });
-
-        return resolve && resolve(Schema);
-      }
-    });
-
+    }),
+    resolveType: (obj) => {
+      return obj.type;
+    }
   });
-  return promise;
+
+  let nodeField = {
+    name: 'Node',
+    type: Node,
+    description: 'A node interface field',
+    args: {
+      id: {
+        type: new GraphQLNonNull(GraphQLString),
+        description: 'Id of node interface'
+      }
+    },
+    resolve: (obj, {
+      id
+    }) => {
+      var keys = _.keys(GraphQLSchemaManager);
+      var allFinds = keys.map(function(key) {
+        var obj = GraphQLSchemaManager[key];
+        return obj.model.find({
+          id: id
+        });
+      });
+      return Promise.all(allFinds).then(function(values) {
+        var foundIndex = -1;
+        var foundObjs = values.find(function(value, index) {
+          if(value.length == 1) {
+            foundIndex = index;
+            return true;
+          }
+        });
+        foundObjs[0].type = GraphQLSchemaManager[keys[foundIndex]].type;
+        return foundObjs[0];
+      });
+    }
+  };
+
+
+
+  _.each(models, function eachInstantiatedModel(thisModel, modelID) {
+    GraphQLSchemaManager.types[modelID] = createGraphQLTypeForWaterlineModel(thisModel, modelID, Node, GraphQLSchemaManager);
+    GraphQLSchemaManager.queries[modelID] = createGraphQLQueries(thisModel, GraphQLSchemaManager.types[modelID], modelID);
+    GraphQLSchemaManager.connectionTypes[modelID] = createConnectionType(modelID, GraphQLSchemaManager.types[modelID]);
+  });
+
+
+  var queryType = new GraphQLObjectType({
+    name: 'Query',
+    fields: () => {
+      return _.reduce(GraphQLSchemaManager.queries, function(total, obj, key) {
+        return _.merge(total, obj);
+      }, {
+        node: nodeField
+      });
+    }
+  });
+
+
+  var mutationType = new GraphQLObjectType({
+    name: 'Mutation',
+    fields: () => ({
+      // Add your own mutations here
+    })
+  });
+
+  Schema = new GraphQLSchema({
+    query: queryType
+  });
+
+  return Schema;
 }
 
 
-
-function createGraphQLTypeForWaterlineModel(model, modelID) {
+function createGraphQLTypeForWaterlineModel(model, modelID, Node, GraphQLSchemaManager) {
   var attributes = model._attributes;
   return new GraphQLObjectType({
     name: modelID,
     description: model.description,
+    interfaces: [Node],
     fields: () => {
       var convertedFields = {};
       _.mapKeys(attributes, function(attribute, key) {
-        var field = {
-          type: waterlineTypesToGraphQLType(attribute.type),
-          description: attribute.description
-        };
-        convertedFields[key] = field;
+          if(attribute.type) {
+            var field = {
+              type: waterlineTypesToGraphQLType(attribute),
+              description: attribute.description
+            };
+            convertedFields[key] = field;
+          }
       });
       var idField = {
-        type: GraphQLString
+        type: new GraphQLNonNull(GraphQLString)
+      };
+      var typeField = {
+        type: new GraphQLNonNull(GraphQLString)
       };
       convertedFields.id = idField;
+      convertedFields.type = typeField;
+
+      var associations = model.associations;
+      associations.forEach((association) => {
+        var connectionKey;
+        var whichQuery;
+        if(association.model){
+          connectionKey = association.model;
+          whichQuery = connectionKey;
+        }else {
+          connectionKey = association.collection;
+          whichQuery = connectionKey +'s';
+        }
+
+        convertedFields[association.alias] = {
+          type: GraphQLSchemaManager.connectionTypes[connectionKey].connectionType,
+          args: connectionArgs,
+          resolve: (_, args) => {
+            return connectionFromArray(
+            GraphQLSchemaManager.queries[connectionKey][whichQuery].resolve(), args)
+        }
+        };
+      });
       return convertedFields;
     }
   });
 }
 
-function createGraphQLQueries(obj) {
-  var modelID = obj.modelID;
-  var graphqlType = obj.type;
-  var waterlineModel = obj.model;
+function createConnectionType(key, graphQLType){
+  return connectionDefinitions({
+    name: key,
+    nodeType: graphQLType
+  });
+}
+
+
+function createGraphQLQueries(waterlineModel, graphqlType, modelID) {
   var queries = {};
   //query to get by id
   queries[modelID] = {
@@ -249,7 +214,7 @@ function createGraphQLQueries(obj) {
   };
   //query to find based on search criteria
   queries[modelID + 's'] = {
-    type:  new GraphQLList(graphqlType),
+    type: new GraphQLList(graphqlType),
     resolve: (obj, {
       criteria
     }) => {
@@ -258,6 +223,7 @@ function createGraphQLQueries(obj) {
       });
     }
   };
+
   return queries;
 }
 
@@ -266,13 +232,13 @@ function createMutationsForWaterlineModel(model, modelID) {
 }
 
 
-function waterlineTypesToGraphQLType(waterLineType) {
-  switch(waterLineType) {
-    case 'string':
-      return GraphQLString;
-    case 'integer':
-      return GraphQLInt;
-    default:
-      return GraphQLString;
-  }
+function waterlineTypesToGraphQLType(attribute) {
+    switch(attribute.type) {
+      case 'string':
+        return GraphQLString;
+      case 'integer':
+        return GraphQLInt;
+      default:
+        return GraphQLString;
+    }
 }
