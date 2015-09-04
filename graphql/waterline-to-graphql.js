@@ -159,7 +159,7 @@ function createGraphQLTypeForWaterlineModel(model, modelID, Node, GraphQLSchemaM
       convertedFields.id = idField;
       convertedFields.type = typeField;
 
-      var associations = model.associations;
+      /*var associations = model.associations;
       associations.forEach((association) => {
         var connectionKey;
         if(association.model) {
@@ -190,6 +190,27 @@ function createGraphQLTypeForWaterlineModel(model, modelID, Node, GraphQLSchemaM
             return promise;
           }
         };
+      });*/
+
+      var associations = model.associations;
+      associations.forEach((association) => {
+        if(association.model) {
+          convertedFields[association.alias] = {
+            type: GraphQLSchemaManager.types[association.model],
+            resolve: (obj, args) => {
+              return GraphQLSchemaManager.queries[association.model][association.model].resolve(obj, {id:obj[association.alias].id});
+            }
+          };
+        }else if(association.collection){
+          convertedFields[association.collection + 's'] = {
+            type: new GraphQLList(GraphQLSchemaManager.types[association.collection]),
+            resolve: (obj, args) => {
+              var searchCriteria = {};
+              searchCriteria[association.via] = obj.id;
+              return GraphQLSchemaManager.queries[association.collection][association.collection + 's'].resolve(obj, searchCriteria);
+            }
+          }
+        }
       });
       return convertedFields;
     }
