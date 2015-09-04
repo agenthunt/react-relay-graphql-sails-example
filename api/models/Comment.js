@@ -8,7 +8,13 @@
 module.exports = {
   identity: 'comment',
   attributes: {
-    text: 'string'
+    text: 'string',
+    on: {
+      model: 'post'
+    },
+    from: {
+      model: 'user'
+    }
   }
 };
 

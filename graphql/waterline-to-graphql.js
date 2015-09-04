@@ -36,10 +36,10 @@ export function getGraphQLSchemaFromSailsModels(models) {
   }
 
   var GraphQLSchemaManager = {
-    types:{},
-    queries:{},
-    connectionTypes:{},
-    mutations:{},
+    types: {},
+    queries: {},
+    connectionTypes: {},
+    mutations: {},
     waterlineModels: models
   };
 
@@ -98,8 +98,10 @@ export function getGraphQLSchemaFromSailsModels(models) {
 
 
   _.each(models, function eachInstantiatedModel(thisModel, modelID) {
-    GraphQLSchemaManager.types[modelID] = createGraphQLTypeForWaterlineModel(thisModel, modelID, Node, GraphQLSchemaManager);
-    GraphQLSchemaManager.queries[modelID] = createGraphQLQueries(thisModel, GraphQLSchemaManager.types[modelID], modelID);
+    GraphQLSchemaManager.types[modelID] = createGraphQLTypeForWaterlineModel(thisModel, modelID, Node,
+      GraphQLSchemaManager);
+    GraphQLSchemaManager.queries[modelID] = createGraphQLQueries(thisModel, GraphQLSchemaManager.types[modelID],
+      modelID);
     GraphQLSchemaManager.connectionTypes[modelID] = createConnectionType(modelID, GraphQLSchemaManager.types[modelID]);
   });
 
@@ -140,13 +142,13 @@ function createGraphQLTypeForWaterlineModel(model, modelID, Node, GraphQLSchemaM
     fields: () => {
       var convertedFields = {};
       _.mapKeys(attributes, function(attribute, key) {
-          if(attribute.type) {
-            var field = {
-              type: waterlineTypesToGraphQLType(attribute),
-              description: attribute.description
-            };
-            convertedFields[key] = field;
-          }
+        if(attribute.type) {
+          var field = {
+            type: waterlineTypesToGraphQLType(attribute),
+            description: attribute.description
+          };
+          convertedFields[key] = field;
+        }
       });
       var idField = {
         type: new GraphQLNonNull(GraphQLString)
@@ -160,22 +162,33 @@ function createGraphQLTypeForWaterlineModel(model, modelID, Node, GraphQLSchemaM
       var associations = model.associations;
       associations.forEach((association) => {
         var connectionKey;
-        var whichQuery;
-        if(association.model){
+        if(association.model) {
           connectionKey = association.model;
-          whichQuery = connectionKey;
-        }else {
+        } else {
           connectionKey = association.collection;
-          whichQuery = connectionKey +'s';
         }
 
+        var whichQuery = connectionKey + 's';
         convertedFields[association.alias] = {
           type: GraphQLSchemaManager.connectionTypes[connectionKey].connectionType,
           args: connectionArgs,
-          resolve: (_, args) => {
-            return connectionFromArray(
-            GraphQLSchemaManager.queries[connectionKey][whichQuery].resolve(), args)
-        }
+          resolve: (obj, args) => {
+            var searchCriteria = {};
+            if(association.collection){
+              searchCriteria[association.via] = obj.id;
+            }else {
+              searchCriteria['id'] = obj[association.alias].id;
+            }
+            var promise = new Promise(function(resolve, reject) {
+              GraphQLSchemaManager.queries[connectionKey][whichQuery].resolve(obj, searchCriteria).then(function(results) {
+                var res = connectionFromArray(results, args);
+                resolve(res);
+              }).catch(function(err) {
+                reject(err);
+              });
+            });
+            return promise;
+          }
         };
       });
       return convertedFields;
@@ -183,7 +196,7 @@ function createGraphQLTypeForWaterlineModel(model, modelID, Node, GraphQLSchemaM
   });
 }
 
-function createConnectionType(key, graphQLType){
+function createConnectionType(key, graphQLType) {
   return connectionDefinitions({
     name: key,
     nodeType: graphQLType
@@ -215,10 +228,8 @@ function createGraphQLQueries(waterlineModel, graphqlType, modelID) {
   //query to find based on search criteria
   queries[modelID + 's'] = {
     type: new GraphQLList(graphqlType),
-    resolve: (obj, {
-      criteria
-    }) => {
-      return waterlineModel.find({}).then(function(results) {
+    resolve: (obj, criteria) => {
+      return waterlineModel.find(criteria).populateAll().then(function(results) {
         return results;
       });
     }
@@ -233,12 +244,12 @@ function createMutationsForWaterlineModel(model, modelID) {
 
 
 function waterlineTypesToGraphQLType(attribute) {
-    switch(attribute.type) {
-      case 'string':
-        return GraphQLString;
-      case 'integer':
-        return GraphQLInt;
-      default:
-        return GraphQLString;
-    }
+  switch(attribute.type) {
+    case 'string':
+      return GraphQLString;
+    case 'integer':
+      return GraphQLInt;
+    default:
+      return GraphQLString;
+  }
 }
